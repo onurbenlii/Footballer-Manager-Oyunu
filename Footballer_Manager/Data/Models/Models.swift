@@ -2,6 +2,12 @@
 
 import Foundation
 
+// YENİ: Haber türünü belirlemek için
+enum NewsType: String, Codable {
+    case standard
+    case transferOffer
+}
+
 enum NewsSymbol: String, Codable {
     case transfer = "arrow.right.arrow.left.circle.fill"
     case contract = "pencil.and.scribble"
@@ -31,6 +37,7 @@ struct PlayerTraining: Codable {
     var monthsRemaining: Int
 }
 
+// DÜZELTİLDİ: NewsItem struct'ının tam ve hatasız hali
 struct NewsItem: Identifiable, Codable, Hashable {
     let id: UUID
     var year: Int
@@ -40,8 +47,17 @@ struct NewsItem: Identifiable, Codable, Hashable {
     let symbolName: String
     var isRead: Bool
     
-    init(id: UUID = UUID(), year: Int, month: Int, title: String, body: String, symbol: NewsSymbol, isRead: Bool = false) {
-        self.id = id
+    // --- ÖNCEKİ MESAJDAKİ GİBİ AMA ARTIK HATASIZ ---
+    var newsType: NewsType = .standard
+    // Sadece transfer teklifleri için doldurulacak alanlar
+    var offerTargetPlayerID: UUID? = nil
+    var offerBidderTeamID: UUID? = nil
+    var offerAmount: Int? = nil
+    // ------------------------------------
+
+    // Basit haberleri oluşturmak için kolay bir init (Codable'ı bozmaz)
+    init(year: Int, month: Int, title: String, body: String, symbol: NewsSymbol, isRead: Bool = false) {
+        self.id = UUID()
         self.year = year
         self.month = month
         self.title = title
@@ -50,19 +66,43 @@ struct NewsItem: Identifiable, Codable, Hashable {
         self.isRead = isRead
     }
     
+    // Transfer teklifi haberi oluşturmak için kolay bir init
+    init(year: Int, month: Int, title: String, body: String, symbol: NewsSymbol, offerTargetPlayerID: UUID, offerBidderTeamID: UUID, offerAmount: Int) {
+        self.id = UUID()
+        self.year = year
+        self.month = month
+        self.title = title
+        self.body = body
+        self.symbolName = symbol.rawValue
+        self.isRead = false
+        self.newsType = .transferOffer
+        self.offerTargetPlayerID = offerTargetPlayerID
+        self.offerBidderTeamID = offerBidderTeamID
+        self.offerAmount = offerAmount
+    }
+    
     var dateString: String {
         let monthNames = [1: "Oca", 2: "Şub", 3: "Mar", 4: "Nis", 5: "May", 6: "Haz", 7: "Tem", 8: "Ağu", 9: "Eyl", 10: "Eki", 11: "Kas", 12: "Ara"]
         return "\(monthNames[month] ?? "") \(year)"
     }
 }
 
+
 // DÜZELTME: id'nin 'let' olması ve varsayılan değer almaması için init'e gerek yok.
 struct MatchResult: Identifiable, Codable {
-    let id: UUID = UUID()
+    let id: UUID
     let homeTeamID: UUID
     let awayTeamID: UUID
     let homeScore: Int
     let awayScore: Int
+    
+    init(homeTeamID: UUID, awayTeamID: UUID, homeScore: Int, awayScore: Int) {
+        self.id = UUID()
+        self.homeTeamID = homeTeamID
+        self.awayTeamID = awayTeamID
+        self.homeScore = homeScore
+        self.awayScore = awayScore
+    }
 }
 
 struct TeamStats: Identifiable, Codable {
@@ -118,6 +158,7 @@ struct Footballer: Identifiable, Codable {
     var lastMatchRating: Double?
     var injury: Injury? = nil
     var activeTraining: PlayerTraining? = nil
+    var isTransferListed: Bool = false
     
     var currentAbility: Int {
         switch position {

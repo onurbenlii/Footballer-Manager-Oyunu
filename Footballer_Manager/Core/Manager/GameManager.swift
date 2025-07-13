@@ -146,6 +146,24 @@ class GameManager: ObservableObject {
         guard let currentOffice = officeLevels[playerManager.officeLevel] else { return (false, "Ofis verisi yok.") }
         self.scoutingOpportunities = marketManager.generateScoutingOpportunities(officeLevel: currentOffice, currentYear: self.currentYear)
         
+        // 4.5. Transfer Tekliflerini Oluştur
+        let listedPlayers = allPlayers.filter { $0.isTransferListed && $0.teamID != nil }
+        for player in listedPlayers {
+            let potentialBidders = teams.filter { $0.id != player.teamID && $0.budget > player.marketValue }
+            for bidder in potentialBidders {
+                let interestScore = (Double(bidder.budget) / 10_000_000) + Double(player.currentAbility / 5) + Double(player.potentialAbility / 10)
+                if Double.random(in: 0...100) < interestScore {
+                    let offerAmount = Int(Double(player.marketValue) * Double.random(in: 0.8...1.3))
+                    if bidder.budget > offerAmount {
+                        let newsBody = "\(bidder.name) kulübü, oyuncunuz \(player.name) \(player.surname) için \(offerAmount.formatted(.currency(code: "TRY"))) değerinde bir transfer teklifi yaptı. Teklifi değerlendirmek için gelen kutunuzu kontrol edin."
+                        
+                        let offerNews = NewsItem(year: currentYear, month: currentMonth, title: "Transfer Teklifi Geldi!", body: newsBody, symbol: .transfer, offerTargetPlayerID: player.id, offerBidderTeamID: bidder.id, offerAmount: offerAmount)
+                        newsItems.insert(offerNews, at: 0)
+                    }
+                }
+            }
+        }
+        
         // 5. Finansal İşlemler
         let managedPlayers = allPlayers.filter { $0.isManagedByPlayer }
         let totalMonthlyIncome = managedPlayers.reduce(0) { total, player in
@@ -221,7 +239,6 @@ class GameManager: ObservableObject {
         return (true, message)
     }
     
-    // TODO: Bu fonksiyonları da gelecekte MarketManager'a taşıyıp delege etmek, yeniden yapılandırmanın bir sonraki adımı olabilir.
     func signPlayerToClub(footballerId: UUID, teamId: UUID) -> (success: Bool, message: String) {
         guard var playerManager = self.playerManager else { return (false, "Yönetici verisi yok.") }
         guard let playerIndex = allPlayers.firstIndex(where: { $0.id == footballerId }) else { return (false, "Oyuncu bulunamadı.") }
@@ -251,13 +268,109 @@ class GameManager: ObservableObject {
     }
     
     func negotiateNewContract(for footballerId: UUID) -> (success: Bool, message: String) {
-        // Bu fonksiyon da gelecekte MarketManager'a taşınabilir.
         return (false, "Bu özellik henüz aktif değil.")
     }
-    
+
     func renewContract(for footballerId: UUID) -> (success: Bool, message: String) {
-        // Bu fonksiyon da gelecekte MarketManager'a taşınabilir.
-        return (false, "Bu özellik henüz aktif değil.")
+        guard var playerManager = self.playerManager else { return (false, "Yönetici verisi bulunamadı.") }
+        guard let playerIndex = allPlayers.firstIndex(where: { $0.id == footballerId }) else { return (false, "Oyuncu bulunamadı.") }
+        var footballer = allPlayers[playerIndex]
+        
+        guard let teamId = footballer.teamID, let team = teams.first(where: { $0.id == teamId }) else {
+            return (false, "Oyuncunun bir kulübü yok.")
+        }
+        
+        let newSalary = Int(Double((footballer.currentAbility * 150) + (footballer.potentialAbility * 50)) * 1.20)
+        let contractLength = footballer.age < 24 ? 4 : (footballer.age < 29 ? 3 : 2)
+        
+        if team.budget < (newSalary * 12 * contractLength) {
+            let message = "\(team.name) kulübünün bütçesi bu yeni sözleşmeyi karşılamaya yetmiyor."
+            addNewsItem(title: "Sözleşme Reddedildi", body: message, symbol: .failure)
+            return (false, message)
+        }
+        
+        let successChance = 80 + playerManager.reputation - (footballer.currentAbility / 10)
+        
+        if Int.random(in: 1...100) <= successChance {
+            footballer.salary = newSalary
+            footballer.contractExpiryYear = self.currentYear + contractLength
+            self.allPlayers[playerIndex] = footballer
+            playerManager.reputation += 3
+            self.playerManager = playerManager
+            
+            let message = "\(footballer.name) \(footballer.surname), \(team.name) ile olan sözleşmesini \(contractLength) yıl daha uzattı! (+3 İtibar)"
+            addNewsItem(title: "Sözleşme Yenilendi", body: message, symbol: .contract)
+            return (true, message)
+            
+        } else {
+            playerManager.reputation = max(1, playerManager.reputation - 2)
+            self.playerManager = playerManager
+            
+            let message = "\(footballer.name) \(footballer.surname) kendisine sunulan yeni sözleşme teklifini yetersiz buldu ve reddetti. (-2 İtibar)"
+            addNewsItem(title: "Teklif Reddedildi", body: message, symbol: .failure)
+            return (false, message)
+        }
+    }
+
+    func toggleTransferListing(for footballerId: UUID) -> (success: Bool, message: String) {
+        guard let playerIndex = allPlayers.firstIndex(where: { $0.id == footballerId }) else {
+            return (false, "Oyuncu bulunamadı.")
+        }
+        
+        allPlayers[playerIndex].isTransferListed.toggle()
+        
+        let isListed = allPlayers[playerIndex].isTransferListed
+        let playerName = allPlayers[playerIndex].name
+        
+        let message = isListed ? "\(playerName) transfer listesine eklendi. İlgilenen kulüplerden gelecek teklifler bekleniyor." : "\(playerName) transfer listesinden çıkarıldı."
+        let newsTitle = isListed ? "Transfer Listesinde" : "Liste Dışı"
+        
+        addNewsItem(title: newsTitle, body: message, symbol: .transfer)
+        
+        return (true, message)
+    }
+    
+    // MARK: - Transfer Teklifi Yönetimi (Kabul/Ret)
+
+    func acceptTransferOffer(newsId: UUID) {
+        guard var playerManager = self.playerManager else { return }
+        
+        guard let newsIndex = newsItems.firstIndex(where: { $0.id == newsId }),
+              let playerID = newsItems[newsIndex].offerTargetPlayerID,
+              let bidderID = newsItems[newsIndex].offerBidderTeamID,
+              let offerAmount = newsItems[newsIndex].offerAmount else { return }
+              
+        guard var player = allPlayers.first(where: { $0.id == playerID }),
+              let newTeam = teams.first(where: { $0.id == bidderID }) else { return }
+
+        let commissionEarned = Int(Double(offerAmount) * (player.transferCommissionRate ?? 0.05))
+        playerManager.cash += commissionEarned
+        
+        if let teamIndex = teams.firstIndex(where: { $0.id == newTeam.id }) {
+            teams[teamIndex].budget -= offerAmount
+        }
+        
+        player.teamID = newTeam.id
+        player.isTransferListed = false
+        let newSalary = Int(Double(player.salary) * 1.5)
+        player.salary = newSalary
+        
+        if let playerIndex = allPlayers.firstIndex(where: { $0.id == playerID }) {
+            allPlayers[playerIndex] = player
+        }
+        
+        playerManager.reputation += 10
+        self.playerManager = playerManager
+        
+        newsItems.remove(at: newsIndex)
+        
+        let successMessage = "\(player.name), \(offerAmount.formatted(.currency(code: "TRY"))) karşılığında \(newTeam.name) takımına transfer oldu. Bu transferden \(commissionEarned.formatted(.currency(code: "TRY"))) komisyon kazandınız! (+10 İtibar)"
+        addNewsItem(title: "Transfer Başarılı!", body: successMessage, symbol: .success)
+    }
+
+    func rejectTransferOffer(newsId: UUID) {
+        guard let newsIndex = newsItems.firstIndex(where: { $0.id == newsId }) else { return }
+        newsItems.remove(at: newsIndex)
     }
 
     // MARK: - Oyun Başlangıcı

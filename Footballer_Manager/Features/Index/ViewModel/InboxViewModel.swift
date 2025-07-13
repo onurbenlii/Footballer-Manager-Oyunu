@@ -1,12 +1,4 @@
-//
-//  InboxViewModel.swift
-//  Footballer_Manager
-//
-//  Created by OnurBenliM2 on 2.07.2025.
-//
-
-
-// In: Features/Inbox/ViewModel/InboxViewModel.swift
+// In: Features/Index/ViewModel/InboxViewModel.swift
 
 import Foundation
 import Combine
@@ -21,19 +13,34 @@ class InboxViewModel: ObservableObject {
     init(gameManager: GameManager) {
         self.gameManager = gameManager
         
-        // GameManager'deki haber listesini dinle
+        // GameManager'deki haber listesini dinle ve her zaman en yeniden eskiye doğru sırala
         gameManager.$newsItems
-            .sink { [weak self] items in
-                self?.newsItems = items
+            .map { items in
+                items.sorted { $0.year > $1.year || ($0.year == $1.year && $0.month > $1.month) }
+            }
+            .sink { [weak self] sortedItems in
+                self?.newsItems = sortedItems
             }
             .store(in: &cancellables)
     }
     
     // Bir haberi okundu olarak işaretle
     func markAsRead(item: NewsItem) {
-        // GameManager'daki ana listede ilgili haberi bul ve durumunu değiştir
-        if let index = gameManager.newsItems.firstIndex(where: { $0.id == item.id }) {
-            gameManager.newsItems[index].isRead = true
+        // Sadece standart haberler okundu olarak işaretlenir, teklifler silinir.
+        if item.newsType == .standard {
+            if let index = gameManager.newsItems.firstIndex(where: { $0.id == item.id }) {
+                gameManager.newsItems[index].isRead = true
+            }
         }
+    }
+    
+    // YENİ FONKSİYON 1: Teklifi Kabul Et
+    func acceptOffer(newsItem: NewsItem) {
+        gameManager.acceptTransferOffer(newsId: newsItem.id)
+    }
+    
+    // YENİ FONKSİYON 2: Teklifi Reddet
+    func rejectOffer(newsItem: NewsItem) {
+        gameManager.rejectTransferOffer(newsId: newsItem.id)
     }
 }

@@ -146,11 +146,19 @@ struct PlayerDetailView: View {
                     }.disabled(viewModel.footballer.activeTraining != nil || viewModel.footballer.injury != nil)
                 }
                 
+                // GÜNCELLENEN BUTON KOD BLOĞU
                 if viewModel.canNegotiateTransfer {
                     Button(action: { viewModel.transferPlayerButtonTapped() }) {
-                        Label("Transfer Pazarlığı Yap", systemImage: "arrow.right.arrow.left.circle.fill")
-                            .foregroundColor(.purple)
-                    }.disabled(viewModel.footballer.activeTraining != nil || viewModel.footballer.injury != nil)
+                        // Oyuncu listede mi değil mi kontrol ederek butonun görünümünü değiştir
+                        if viewModel.footballer.isTransferListed {
+                            Label("Transfer Listesinden Çıkar", systemImage: "xmark.circle.fill")
+                                .foregroundColor(.red) // Listeden çıkarma kırmızı olsun
+                        } else {
+                            Label("Transfer Pazarlığı Yap", systemImage: "arrow.right.arrow.left.circle.fill")
+                                .foregroundColor(.purple) // Listeye ekleme mor olsun
+                        }
+                    }
+                    .disabled(viewModel.footballer.activeTraining != nil || viewModel.footballer.injury != nil)
                 }
             }
         }

@@ -37,9 +37,15 @@ class PlayerDetailViewModel: ObservableObject {
         subscribeToGameManagerUpdates()
     }
 
+    // GÜNCELLENEN FONKSİYON
     func transferPlayerButtonTapped() {
-        let result = gameManager.negotiateNewContract(for: footballer.id)
+        // GameManager'daki yeni toggle fonksiyonumuzu çağırıyoruz
+        let result = gameManager.toggleTransferListing(for: footballer.id)
+        
+        // Arayüzü tazelemek için oyuncunun son halini yeniden çekiyoruz
         self.refreshFootballerData()
+        
+        // Kullanıcıya bilgi vermek için alert'i hazırlıyoruz
         self.alertMessage = result.message
         self.showAlert = true
     }
