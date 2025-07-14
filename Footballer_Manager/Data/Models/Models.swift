@@ -2,7 +2,63 @@
 
 import Foundation
 
-// YENİ: Haber türünü belirlemek için
+// --- Personel Yönetimi için Yeni Yapılar ---
+enum StaffRole: String, Codable, CaseIterable {
+    case scout = "Gözlemci"
+    case commercial = "Ticari Müdür"
+    case coach = "Antrenör"
+}
+
+// Ofis seviyelerinin özelliklerini tutacak struct
+struct OfficeLevel {
+    let level: Int
+    let maxPlayers: Int
+    let upgradeCost: Int?
+    let minScoutingPotential: Int
+    let maxScoutingPotential: Int
+}
+
+struct StaffMember: Identifiable, Codable, Hashable {
+    let id: UUID
+    let name: String
+    let role: StaffRole
+    let skillLevel: Int
+    let weeklyWage: Int
+}
+
+struct StaffCandidate: Identifiable, Codable, Hashable {
+    let id: UUID
+    let staff: StaffMember
+}
+// ------------------------------------------
+
+// --- Transfer Pazarlığı için Yeni Yapılar ---
+enum OfferStatus: String, Codable {
+    case pending = "Beklemede"
+    case negotiating = "Pazarlıkta"
+    case accepted = "Kabul Edildi"
+    case rejected = "Reddedildi"
+}
+
+struct TransferOffer: Identifiable, Codable, Hashable {
+    let id: UUID
+    let playerID: UUID
+    let offeringTeamID: UUID
+    var amount: Int
+    var proposedSalary: Int
+    var status: OfferStatus
+
+    init(playerID: UUID, offeringTeamID: UUID, amount: Int, proposedSalary: Int) {
+        self.id = UUID()
+        self.playerID = playerID
+        self.offeringTeamID = offeringTeamID
+        self.amount = amount
+        self.proposedSalary = proposedSalary
+        self.status = .pending
+    }
+}
+// ------------------------------------------
+
 enum NewsType: String, Codable {
     case standard
     case transferOffer
@@ -37,7 +93,6 @@ struct PlayerTraining: Codable {
     var monthsRemaining: Int
 }
 
-// DÜZELTİLDİ: NewsItem struct'ının tam ve hatasız hali
 struct NewsItem: Identifiable, Codable, Hashable {
     let id: UUID
     var year: Int
@@ -46,16 +101,11 @@ struct NewsItem: Identifiable, Codable, Hashable {
     let body: String
     let symbolName: String
     var isRead: Bool
-    
-    // --- ÖNCEKİ MESAJDAKİ GİBİ AMA ARTIK HATASIZ ---
     var newsType: NewsType = .standard
-    // Sadece transfer teklifleri için doldurulacak alanlar
     var offerTargetPlayerID: UUID? = nil
     var offerBidderTeamID: UUID? = nil
     var offerAmount: Int? = nil
-    // ------------------------------------
 
-    // Basit haberleri oluşturmak için kolay bir init (Codable'ı bozmaz)
     init(year: Int, month: Int, title: String, body: String, symbol: NewsSymbol, isRead: Bool = false) {
         self.id = UUID()
         self.year = year
@@ -66,7 +116,6 @@ struct NewsItem: Identifiable, Codable, Hashable {
         self.isRead = isRead
     }
     
-    // Transfer teklifi haberi oluşturmak için kolay bir init
     init(year: Int, month: Int, title: String, body: String, symbol: NewsSymbol, offerTargetPlayerID: UUID, offerBidderTeamID: UUID, offerAmount: Int) {
         self.id = UUID()
         self.year = year
@@ -87,8 +136,6 @@ struct NewsItem: Identifiable, Codable, Hashable {
     }
 }
 
-
-// DÜZELTME: id'nin 'let' olması ve varsayılan değer almaması için init'e gerek yok.
 struct MatchResult: Identifiable, Codable {
     let id: UUID
     let homeTeamID: UUID
@@ -181,6 +228,7 @@ struct Team: Identifiable, Codable {
     let id: UUID
     var name: String
     var budget: Int
+    var prestige: Int
 }
 
 struct PlayerManager: Codable {
@@ -188,4 +236,20 @@ struct PlayerManager: Codable {
     var reputation: Int
     var managedFootballerIDs: [UUID]
     var officeLevel: Int = 1
+    var hiredStaff: [StaffMember] = []
+}
+
+// Oyunu kaydetmek için kullanılan ana yapı
+struct GameState: Codable {
+    var playerManager: PlayerManager
+    var allPlayers: [Footballer]
+    var scoutingOpportunities: [Footballer]
+    var teams: [Team]
+    var newsItems: [NewsItem]
+    var leagueTable: [TeamStats]
+    var recentResults: [MatchResult]
+    var currentYear: Int
+    var currentMonth: Int
+    var activeOffers: [TransferOffer]
+    var staffMarket: [StaffCandidate] = []
 }

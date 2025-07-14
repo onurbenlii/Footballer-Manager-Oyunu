@@ -56,8 +56,18 @@ struct DashboardView: View {
                         Label("Ofisim", systemImage: "building.2.crop.circle.fill")
                     }
                     
+                    NavigationLink(destination: StaffView(gameManager: gameManager)) {
+                        Label("Personel", systemImage: "person.2.fill")
+                    }
+                    
                     NavigationLink(destination: LeagueView(gameManager: gameManager)) {
                                            Label("Puan Durumu", systemImage: "sportscourt.fill")
+                    }
+                    
+                    // DashboardView.swift -> Aksiyonlar bölümüne ekle
+
+                    NavigationLink(destination: TransferCenterView(gameManager: gameManager)) {
+                        Label("Transfer Merkezi", systemImage: "arrow.right.arrow.left.square.fill")
                     }
                     
                     NavigationLink(destination: ScoutingView(gameManager: gameManager)) {

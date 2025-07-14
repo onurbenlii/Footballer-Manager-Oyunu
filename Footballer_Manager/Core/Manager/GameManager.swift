@@ -3,28 +3,6 @@
 import Foundation
 import Combine
 
-// Ofis seviyelerinin özelliklerini tutacak struct
-struct OfficeLevel {
-    let level: Int
-    let maxPlayers: Int
-    let upgradeCost: Int?
-    let minScoutingPotential: Int
-    let maxScoutingPotential: Int
-}
-
-// Kaydedilecek tüm oyun durumunu bir arada tutan yapı
-struct GameState: Codable {
-    var playerManager: PlayerManager
-    var allPlayers: [Footballer]
-    var scoutingOpportunities: [Footballer]
-    var teams: [Team]
-    var newsItems: [NewsItem]
-    var leagueTable: [TeamStats]
-    var recentResults: [MatchResult]
-    var currentYear: Int
-    var currentMonth: Int
-}
-
 class GameManager: ObservableObject {
     
     @Published var allPlayers: [Footballer] = []
@@ -32,6 +10,8 @@ class GameManager: ObservableObject {
     @Published var teams: [Team] = []
     @Published var leagueTable: [TeamStats] = []
     @Published var recentResults: [MatchResult] = []
+    @Published var activeOffers: [TransferOffer] = []
+    @Published var staffMarket: [StaffCandidate] = []
     
     @Published var playerManager: PlayerManager?
     @Published var newsItems: [NewsItem] = []
@@ -39,12 +19,10 @@ class GameManager: ObservableObject {
     @Published var currentYear: Int = 2025
     @Published var currentMonth: Int = 7
     
-    // Uzman Yönetici Sınıfları
     private let playerLifecycleManager = PlayerLifecycleManager()
     private let simulationManager = SimulationManager()
     private let marketManager = MarketManager()
     
-    // Antrenman kampları listesi
     let trainingCamps: [TrainingCamp] = [
         TrainingCamp(id: UUID(), name: "Hız Kampı", description: "Oyuncunun hız ve depar özelliklerini geliştirir.", cost: 100_000, durationMonths: 3, targetAttribute: \.pace, pointsGained: 2, iconName: "hare.fill"),
         TrainingCamp(id: UUID(), name: "Bitiricilik Kliniği", description: "Forvet ve ofansif orta sahalar için şut yeteneğini keskinleştirir.", cost: 150_000, durationMonths: 4, targetAttribute: \.shooting, pointsGained: 3, iconName: "soccerball.inverse"),
@@ -79,7 +57,7 @@ class GameManager: ObservableObject {
     
     func saveGame() {
         guard let playerManager = playerManager else { return }
-        let gameState = GameState(playerManager: playerManager, allPlayers: allPlayers, scoutingOpportunities: scoutingOpportunities, teams: teams, newsItems: newsItems, leagueTable: leagueTable, recentResults: recentResults, currentYear: currentYear, currentMonth: currentMonth)
+        let gameState = GameState(playerManager: playerManager, allPlayers: allPlayers, scoutingOpportunities: scoutingOpportunities, teams: teams, newsItems: newsItems, leagueTable: leagueTable, recentResults: recentResults, currentYear: currentYear, currentMonth: currentMonth, activeOffers: activeOffers, staffMarket: staffMarket)
         do {
             let data = try JSONEncoder().encode(gameState)
             try data.write(to: saveURL, options: [.atomicWrite, .completeFileProtection])
@@ -103,6 +81,8 @@ class GameManager: ObservableObject {
             self.recentResults = gameState.recentResults
             self.currentYear = gameState.currentYear
             self.currentMonth = gameState.currentMonth
+            self.activeOffers = gameState.activeOffers
+            self.staffMarket = gameState.staffMarket
             return true
         } catch {
             print("Kayıtlı oyun yüklenemedi: \(error.localizedDescription)")
@@ -149,16 +129,24 @@ class GameManager: ObservableObject {
         // 4.5. Transfer Tekliflerini Oluştur
         let listedPlayers = allPlayers.filter { $0.isTransferListed && $0.teamID != nil }
         for player in listedPlayers {
-            let potentialBidders = teams.filter { $0.id != player.teamID && $0.budget > player.marketValue }
+            let potentialBidders = teams.filter { team in
+                let alreadyOffered = self.activeOffers.contains { $0.playerID == player.id && $0.offeringTeamID == team.id }
+                return team.id != player.teamID && team.budget > player.marketValue && !alreadyOffered
+            }
+            
             for bidder in potentialBidders {
-                let interestScore = (Double(bidder.budget) / 10_000_000) + Double(player.currentAbility / 5) + Double(player.potentialAbility / 10)
-                if Double.random(in: 0...100) < interestScore {
+                let prestigeBonus = bidder.prestige * 2
+                let abilityBonus = (player.currentAbility - 60)
+                let potentialBonus = (player.potentialAbility - 70) / 2
+                let interestScore = prestigeBonus + abilityBonus + potentialBonus
+                
+                if Double.random(in: 0...100) < Double(max(20, interestScore)) {
                     let offerAmount = Int(Double(player.marketValue) * Double.random(in: 0.8...1.3))
                     if bidder.budget > offerAmount {
-                        let newsBody = "\(bidder.name) kulübü, oyuncunuz \(player.name) \(player.surname) için \(offerAmount.formatted(.currency(code: "TRY"))) değerinde bir transfer teklifi yaptı. Teklifi değerlendirmek için gelen kutunuzu kontrol edin."
-                        
-                        let offerNews = NewsItem(year: currentYear, month: currentMonth, title: "Transfer Teklifi Geldi!", body: newsBody, symbol: .transfer, offerTargetPlayerID: player.id, offerBidderTeamID: bidder.id, offerAmount: offerAmount)
-                        newsItems.insert(offerNews, at: 0)
+                        let initialSalary = Int(Double(player.currentAbility * 120) * (1.0 + Double(bidder.prestige) / 25.0))
+                        let newOffer = TransferOffer(playerID: player.id, offeringTeamID: bidder.id, amount: offerAmount, proposedSalary: initialSalary)
+                        self.activeOffers.append(newOffer)
+                        addNewsItem(title: "Yeni Transfer Teklifi", body: "\(player.name) için yeni bir transfer teklifi aldın. Detaylar için Transfer Merkezi'ni kontrol et.", symbol: .transfer)
                     }
                 }
             }
@@ -175,8 +163,10 @@ class GameManager: ObservableObject {
         }
         playerManager.cash += totalMonthlyIncome
         
-        let monthlyExpenses = 25000
-        playerManager.cash -= monthlyExpenses
+        let officeExpenses = 25000
+        let totalStaffWages = playerManager.hiredStaff.reduce(0) { $0 + $1.weeklyWage } * 4
+        playerManager.cash -= (officeExpenses + totalStaffWages)
+        
         self.playerManager = playerManager
         
         monthAdvancedPublisher.send()
@@ -185,7 +175,7 @@ class GameManager: ObservableObject {
         return (true, finalMessage)
     }
     
-    // MARK: - Yönetici Fonksiyonlarına Delege Etme
+    // MARK: - Yönetici Fonksiyonları
     
     func upgradeOffice() -> (success: Bool, message: String) {
         guard let playerManager = self.playerManager else { return (false, "Yönetici verisi yok.") }
@@ -266,10 +256,6 @@ class GameManager: ObservableObject {
         addNewsItem(title: "İlk Profesyonel Sözleşme", body: msg, symbol: .success)
         return (true, msg)
     }
-    
-    func negotiateNewContract(for footballerId: UUID) -> (success: Bool, message: String) {
-        return (false, "Bu özellik henüz aktif değil.")
-    }
 
     func renewContract(for footballerId: UUID) -> (success: Bool, message: String) {
         guard var playerManager = self.playerManager else { return (false, "Yönetici verisi bulunamadı.") }
@@ -330,49 +316,121 @@ class GameManager: ObservableObject {
         return (true, message)
     }
     
-    // MARK: - Transfer Teklifi Yönetimi (Kabul/Ret)
-
-    func acceptTransferOffer(newsId: UUID) {
+    // MARK: - Transfer Teklifi Yönetimi
+    
+    func acceptTransferOffer(offerId: UUID) {
         guard var playerManager = self.playerManager else { return }
+        guard let offerIndex = activeOffers.firstIndex(where: { $0.id == offerId }) else { return }
+        let offer = activeOffers[offerIndex]
         
-        guard let newsIndex = newsItems.firstIndex(where: { $0.id == newsId }),
-              let playerID = newsItems[newsIndex].offerTargetPlayerID,
-              let bidderID = newsItems[newsIndex].offerBidderTeamID,
-              let offerAmount = newsItems[newsIndex].offerAmount else { return }
-              
-        guard var player = allPlayers.first(where: { $0.id == playerID }),
-              let newTeam = teams.first(where: { $0.id == bidderID }) else { return }
+        guard var player = allPlayers.first(where: { $0.id == offer.playerID }),
+              let newTeam = teams.first(where: { $0.id == offer.offeringTeamID }) else { return }
 
-        let commissionEarned = Int(Double(offerAmount) * (player.transferCommissionRate ?? 0.05))
+        let commissionEarned = Int(Double(offer.amount) * (player.transferCommissionRate ?? 0.05))
         playerManager.cash += commissionEarned
         
         if let teamIndex = teams.firstIndex(where: { $0.id == newTeam.id }) {
-            teams[teamIndex].budget -= offerAmount
+            teams[teamIndex].budget -= offer.amount
         }
         
         player.teamID = newTeam.id
         player.isTransferListed = false
-        let newSalary = Int(Double(player.salary) * 1.5)
-        player.salary = newSalary
+        player.salary = offer.proposedSalary
         
-        if let playerIndex = allPlayers.firstIndex(where: { $0.id == playerID }) {
+        if let playerIndex = allPlayers.firstIndex(where: { $0.id == offer.playerID }) {
             allPlayers[playerIndex] = player
         }
         
         playerManager.reputation += 10
         self.playerManager = playerManager
         
-        newsItems.remove(at: newsIndex)
+        activeOffers.remove(at: offerIndex)
         
-        let successMessage = "\(player.name), \(offerAmount.formatted(.currency(code: "TRY"))) karşılığında \(newTeam.name) takımına transfer oldu. Bu transferden \(commissionEarned.formatted(.currency(code: "TRY"))) komisyon kazandınız! (+10 İtibar)"
+        let successMessage = "\(player.name), \(offer.amount.formatted(.currency(code: "TRY"))) karşılığında \(newTeam.name) takımına transfer oldu. Bu transferden \(commissionEarned.formatted(.currency(code: "TRY"))) komisyon kazandınız! (+10 İtibar)"
         addNewsItem(title: "Transfer Başarılı!", body: successMessage, symbol: .success)
     }
 
-    func rejectTransferOffer(newsId: UUID) {
-        guard let newsIndex = newsItems.firstIndex(where: { $0.id == newsId }) else { return }
-        newsItems.remove(at: newsIndex)
+    func rejectTransferOffer(offerId: UUID) {
+        guard let offerIndex = activeOffers.firstIndex(where: { $0.id == offerId }) else { return }
+        activeOffers.remove(at: offerIndex)
+    }
+    
+    func makeCounterOffer(offerId: UUID, counterAmount: Int, counterSalary: Int, successChance: Int) -> (success: Bool, message: String) {
+        guard let offerIndex = activeOffers.firstIndex(where: { $0.id == offerId }) else {
+            return (false, "Teklif artık geçerli değil.")
+        }
+        
+        guard let player = allPlayers.first(where: { $0.id == activeOffers[offerIndex].playerID }),
+              let team = teams.first(where: { $0.id == activeOffers[offerIndex].offeringTeamID }) else {
+            return (false, "Oyuncu veya kulüp bulunamadı.")
+        }
+        
+        let totalCost = counterAmount + (counterSalary * 12 * 3)
+        if team.budget < totalCost {
+            return (false, "Teklifiniz (bonservis + 3 yıllık maaş) kulübün bütçesini aşıyor. Daha düşük bir miktar deneyin.")
+        }
+
+        if Int.random(in: 1...100) <= successChance {
+            activeOffers[offerIndex].amount = counterAmount
+            activeOffers[offerIndex].proposedSalary = counterSalary
+            activeOffers[offerIndex].status = .accepted
+
+            acceptTransferOffer(offerId: offerId)
+            return (true, "Harika! \(team.name) kulübü karşı teklifinizi kabul etti. Transfer tamamlandı!")
+            
+        } else {
+            activeOffers.remove(at: offerIndex)
+            if var manager = self.playerManager {
+                manager.reputation = max(1, manager.reputation - 1)
+                self.playerManager = manager
+            }
+            return (false, "Ne yazık ki, \(team.name) kulübü karşı teklifinizi çok yüksek buldu ve pazarlıktan çekildi. (-1 İtibar)")
+        }
     }
 
+    // MARK: - Personel Yönetimi
+    
+    func generateInitialStaffMarket() {
+        self.staffMarket.removeAll()
+        let names = ["A. Yılmaz", "B. Kaya", "C. Demir", "D. Çelik", "E. Şahin", "F. Öztürk", "G. Arslan", "H. Doğan"]
+        
+        for role in StaffRole.allCases {
+            for _ in 0..<2 {
+                let skill = Int.random(in: 1...25)
+                let wage = 100 + (skill * 15)
+                let staff = StaffMember(id: UUID(), name: names.randomElement()!, role: role, skillLevel: skill, weeklyWage: wage)
+                let candidate = StaffCandidate(id: UUID(), staff: staff)
+                self.staffMarket.append(candidate)
+            }
+        }
+    }
+
+    func hireStaffMember(candidateId: UUID) -> (success: Bool, message: String) {
+        guard var manager = self.playerManager else {
+            return (false, "Menajer verileri bulunamadı.")
+        }
+        
+        guard let candidateIndex = staffMarket.firstIndex(where: { $0.id == candidateId }) else {
+            return (false, "Personel adayı bulunamadı.")
+        }
+        
+        let candidate = staffMarket[candidateIndex]
+        
+        if manager.hiredStaff.contains(where: { $0.role == candidate.staff.role }) {
+            return (false, "Bu pozisyon için zaten bir çalışanınız var.")
+        }
+        
+        manager.hiredStaff.append(candidate.staff)
+        self.playerManager = manager
+        
+        staffMarket.remove(at: candidateIndex)
+        
+        let message = "\(candidate.staff.name), \(candidate.staff.role.rawValue) olarak ekibinize katıldı."
+        addNewsItem(title: "Yeni Personel", body: message, symbol: .success)
+        
+        return (true, message)
+    }
+    
     // MARK: - Oyun Başlangıcı
     
     func generateInitialData() {
@@ -381,7 +439,7 @@ class GameManager: ObservableObject {
         
         let teamNames = ["Aslan Spor", "Kartal Gücü", "Kanarya FK", "Bordo Mavi", "Sivas Yiğidolar", "Göztepe", "Yeşil Timsahlar", "Anadolu Yıldızı", "Başkent United", "Ege FK", "Akdeniz Gücü", "Dağlar Spor"]
         for name in teamNames {
-            let team = Team(id: UUID(), name: name, budget: Int.random(in: 20_000_000...80_000_000))
+            let team = Team(id: UUID(), name: name, budget: Int.random(in: 20_000_000...80_000_000), prestige: Int.random(in: 1...10))
             self.teams.append(team)
             self.leagueTable.append(TeamStats(teamID: team.id))
             self.allPlayers.append(contentsOf: marketManager.createInitialSquad(for: team, currentYear: self.currentYear))
@@ -389,6 +447,8 @@ class GameManager: ObservableObject {
         
         guard let currentOffice = officeLevels[1] else { return }
         self.scoutingOpportunities = marketManager.generateScoutingOpportunities(officeLevel: currentOffice, currentYear: self.currentYear)
+        
+        generateInitialStaffMarket() // Personel piyasasını oluştur
         print("✅ Başarıyla oluşturuldu.")
     }
 }
